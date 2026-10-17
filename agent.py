@@ -1,6 +1,14 @@
-import json
+# -*- coding: utf-8 -*-
+import sys
+import io
+
+# 強制將標準輸出（stdout）和標準錯誤（stderr）改為 UTF-8 編碼，防止中文亂碼
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 import os
 import subprocess
+import json
 from openai import OpenAI
 
 # 1. 連線到本機 Ollama
@@ -52,8 +60,10 @@ messages = [
         "role": "system",
         "content": (
             "你是一個專業的 Git 助手與高級工程師 AI 代理。"
-            "請先檢查 `git status` 與 `git diff`，分析變更後，"
-            "透過 run_terminal_command 工具執行 `git add .` 與 `git commit -m '你的專業訊息'` 來完成提交。"
+            "請先檢查 `git status`。"
+            "如果檔案尚未 add，請執行 `git add .`；"
+            "如果已經準備好，請務必使用【雙引號】執行 git commit，例如：git commit -m \"fix: update agent.py logic\"。"
+            "【嚴格規定】Commit 訊息必須全部使用英文，絕對不准使用中文或單引號，以免終端機解析錯誤。"
             "絕對不准自己發明或想像其他工具名稱。"
         ),
     },
@@ -89,18 +99,25 @@ for turn in range(4):
       args = json.loads(tool_call.function.arguments)
       command_to_run = args.get("command")
 
-  # 2. 萬能容錯機制：如果模型把 JSON 寫在文字回覆裡
+  # 2. 萬能容錯機制：攔截文字中的 JSON（支援單引號或雙引號）
   elif "run_terminal_command" in content_to_check or "command" in content_to_check:
     try:
       start_idx = content_to_check.find("{")
       end_idx = content_to_check.rfind("}") + 1
       if start_idx != -1 and end_idx != 0:
         json_str = content_to_check[start_idx:end_idx]
-        parsed_json = json.loads(json_str)
+        # 兼容處理模型可能用單引號包覆字串的問題
+        try:
+          parsed_json = json.loads(json_str)
+        except json.JSONDecodeError:
+          # 如果標準 json.loads 失敗，嘗試把外層或內層的單引號轉成雙引號
+          fixed_json_str = json_str.replace("'", '"')
+          parsed_json = json.loads(fixed_json_str)
+
         if "arguments" in parsed_json and "command" in parsed_json["arguments"]:
           command_to_run = parsed_json["arguments"]["command"]
-    except Exception:
-      pass
+    except Exception as e:
+      print(f"解析指令時發生例外狀況: {e}")
 
   # 如果成功抓到指令，執行它並把結果餵回給模型
   if command_to_run:
