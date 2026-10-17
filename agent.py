@@ -10,6 +10,7 @@ client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 # 2. 定義終端機工具
 def run_terminal_command(command):
   print(f"\n⚡ [Agent 正在執行終端機指令]: {command}")
+
   if "ls" in command and "dir" not in command:
     command = "dir"
 
@@ -29,7 +30,8 @@ tools = [
         "function": {
             "name": "run_terminal_command",
             "description": (
-                "在作業系統的終端機執行指定的 Shell 指令（例如跑測試、查看目錄檔案等）。"
+                "在終端機執行指定的 Shell 指令，可用於執行 git status, git diff,"
+                " git commit 等。"
             ),
             "parameters": {
                 "type": "object",
@@ -49,23 +51,25 @@ messages = [
     {
         "role": "system",
         "content": (
-            "你是一個擁有終端機操作權限的高級工程師 AI 代理。"
-            "當需要執行指令時，請透過工具呼叫來完成任務。請一步一步執行，直到完成使用者的要求為止。"
+            "你是一個專業的 Git 助手與高級工程師 AI 代理。"
+            "請先檢查 `git status` 與 `git diff`，分析變更後，"
+            "透過 run_terminal_command 工具執行 `git add .` 與 `git commit -m '你的專業訊息'` 來完成提交。"
+            "絕對不准自己發明或想像其他工具名稱。"
         ),
     },
     {
         "role": "user",
         "content": (
-            "請幫我檢查目前這個專案資料夾底下有哪些檔案，並執行一下"
-            " test_code.py 看看目前的執行狀況。"
+            "請幫我檢查目前專案的變更，並自動幫我完成 git add 與 git commit"
+            " 的工作。"
         ),
     },
 ]
 
-print("--- 🤖 啟動連續迴圈 AI 代理 ---")
+print("--- 🤖 啟動全自動 Git 代理 ---")
 
-# 進入連續對話迴圈（最多執行 3 次互動，避免無限迴圈）
-for turn in range(3):
+# 進入連續對話迴圈（擴大到 4 次，讓它有空間做完 status -> diff -> commit）
+for turn in range(4):
   print(f"\n--- 迴圈第 {turn + 1} 次思考 ---")
 
   response = client.chat.completions.create(
@@ -78,26 +82,23 @@ for turn in range(3):
 
   command_to_run = None
 
-  # 檢查標準 tool_calls
+  # 1. 檢查標準 tool_calls
   if response_message.tool_calls:
     tool_call = response_message.tool_calls[0]
     if tool_call.function.name == "run_terminal_command":
       args = json.loads(tool_call.function.arguments)
       command_to_run = args.get("command")
 
-  # 容錯機制：從文字中抓 JSON 指令
-  elif "run_terminal_command" in content_to_check or "python test_code.py" in content_to_check:
+  # 2. 萬能容錯機制：如果模型把 JSON 寫在文字回覆裡
+  elif "run_terminal_command" in content_to_check or "command" in content_to_check:
     try:
-      if "{" in content_to_check and "}" in content_to_check:
-        start_idx = content_to_check.find("{")
-        end_idx = content_to_check.rfind("}") + 1
+      start_idx = content_to_check.find("{")
+      end_idx = content_to_check.rfind("}") + 1
+      if start_idx != -1 and end_idx != 0:
         json_str = content_to_check[start_idx:end_idx]
         parsed_json = json.loads(json_str)
         if "arguments" in parsed_json and "command" in parsed_json["arguments"]:
           command_to_run = parsed_json["arguments"]["command"]
-      # 如果模型直接用文字寫了指令
-      elif "python test_code.py" in content_to_check:
-        command_to_run = "python test_code.py"
     except Exception:
       pass
 
@@ -117,7 +118,7 @@ for turn in range(3):
         "content": tool_output,
     })
   else:
-    # 如果 AI 沒有要求執行指令，代表它已經回答完畢了
+    # 如果 AI 沒有要求執行指令，代表任務已經全數完成
     print("\n--- 💡 AI 的最終回覆 ---")
     print(content_to_check)
     break
